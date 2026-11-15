@@ -787,51 +787,75 @@
     const gridGy = new Float32Array(TOTAL_CELLS);
 
     // -------------------------------------------------------------
-    // "Tammi forever" Cursive Text Rasterizer
+    // "Tammi forever" Cursive ASCII Text Engine
     // -------------------------------------------------------------
-    const textCanvas = document.createElement("canvas");
-    textCanvas.width = COLS;
-    textCanvas.height = ROWS;
-    const textCtx = textCanvas.getContext("2d", { willReadFrequently: true });
+    // Placed in the clear area above the flower bud (rows 2 to 7)
+    // High-resolution sampling with delicate stroke thinning
+    const highCanvas = document.createElement("canvas");
+    highCanvas.width = W;
+    highCanvas.height = H;
+    const highCtx = highCanvas.getContext("2d", { willReadFrequently: true });
 
-    let textMask = null;
     let textCells = [];
 
     function buildTextMask() {
-      textCtx.clearRect(0, 0, COLS, ROWS);
-      textCtx.fillStyle = "#ffffff";
-      // Position at top center with subtle tilt/flow
-      textCtx.font = "italic 600 13px 'Great Vibes', cursive, 'Brush Script MT', 'Dancing Script', sans-serif";
-      textCtx.textAlign = "center";
-      textCtx.textBaseline = "middle";
-      textCtx.fillText("Tammi forever", Math.floor(COLS / 2), 9);
+      highCtx.clearRect(0, 0, W, H);
+      highCtx.fillStyle = "#ffffff";
+      // Elegant flowing cursive script font
+      highCtx.font = "italic 44px 'Great Vibes', 'Dancing Script', 'Brush Script MT', cursive, sans-serif";
+      highCtx.textAlign = "center";
+      highCtx.textBaseline = "middle";
 
-      const imgData = textCtx.getImageData(0, 0, COLS, ROWS).data;
-      textMask = new Float32Array(TOTAL_CELLS);
+      // Render at Y ~ 72px (corresponds to grid row ~5, cleanly above the rose blossom)
+      const textCenterX = W / 2;
+      const textCenterY = 72;
+      highCtx.fillText("Tammi forever", textCenterX, textCenterY);
+
+      const imgData = highCtx.getImageData(0, 0, W, H).data;
       textCells = [];
 
       let minX = 999, maxX = -999;
-      for (let y = 0; y < ROWS; y++) {
-        for (let x = 0; x < COLS; x++) {
-          const idx = y * COLS + x;
-          const alpha = imgData[idx * 4 + 3] / 255;
-          if (alpha > 0.08) {
-            textMask[idx] = alpha;
-            textCells.push({ x, y, idx, alpha });
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
+
+      // Sample grid cells to determine text presence
+      for (let iy = 1; iy <= 9; iy++) {
+        for (let ix = 15; ix < COLS - 15; ix++) {
+          const xCenter = ix * CW + CW / 2;
+          const yCenter = iy * CH + CH / 2;
+
+          // Check cell intensity with 3x3 sub-sampling
+          let coverage = 0;
+          for (let sy = -4; sy <= 4; sy += 4) {
+            for (let sx = -3; sx <= 3; sx += 3) {
+              const px = Math.floor(xCenter + sx);
+              const py = Math.floor(yCenter + sy);
+              if (px >= 0 && px < W && py >= 0 && py < H) {
+                const alpha = imgData[(py * W + px) * 4 + 3];
+                if (alpha > 60) coverage++;
+              }
+            }
+          }
+
+          if (coverage >= 2) {
+            const gIdx = iy * COLS + ix;
+            textCells.push({
+              x: ix,
+              y: iy,
+              idx: gIdx,
+              density: coverage / 9
+            });
+            if (ix < minX) minX = ix;
+            if (ix > maxX) maxX = ix;
           }
         }
       }
 
-      // Sort left-to-right for write-on cursive reveal effect
+      // Calculate horizontal progression for smooth cursive write-on
       const span = Math.max(1, maxX - minX);
       for (let i = 0; i < textCells.length; i++) {
         textCells[i].prog = (textCells[i].x - minX) / span;
       }
     }
 
-    // Try building immediately, and also when custom font loads
     buildTextMask();
     if (document.fonts) {
       document.fonts.ready.then(() => {
@@ -1283,12 +1307,12 @@
       // -------------------------------------------------------------
       if (textCells.length > 0) {
         // Revealed in sync with rose drawing (starts at t=1.2s, writes out across 3.8s)
-        const textStart = 1.2;
-        const textDuration = 3.8;
+        const textStart = 1.0;
+        const textDuration = 3.6;
         const textProg = Math.max(0, Math.min(1.0, (curT - textStart) / textDuration));
 
-        const textSparklePool = ["*", "+", "✦", "·", "*"];
-        const textPoolChars = ["#", "@", "%", "&", "8", "o", "*", "~"];
+        // Light & delicate cursive ASCII character palette
+        const CURSIVE_CHARS = ["~", "-", "/", "\\", "r", "c", "v", "x", "z", "+", "i", "l"];
 
         for (let ci = 0; ci < textCells.length; ci++) {
           const cell = textCells[ci];
@@ -1296,34 +1320,36 @@
           if (textProg < cell.prog) continue;
 
           const gIdx = cell.idx;
+          // Avoid overwriting rose if any particle or ray is there
+          if (gridPart[gIdx] >= 0) continue;
+
           const writeAge = textProg - cell.prog;
           const isJustWritten = writeAge >= 0 && writeAge < 0.08 && textProg < 0.99;
 
           // Sparkle wave & twinkling across the letters
-          const twSin = Math.sin(curT * 4.5 + cell.x * 0.45 + cell.y * 0.7);
+          const twSin = Math.sin(curT * 5.0 + cell.x * 0.4 + cell.y * 0.8);
           const sparkleBurst = Math.pow(Math.max(0, twSin), 6);
-          const isSparkling = sparkleBurst > 0.45 || isJustWritten;
+          const isSparkling = sparkleBurst > 0.55 || isJustWritten;
 
-          // Red ASCII petal colors: PETAL (red), EDGE (soft pink/red), GLINT (white sparkle)
           if (isSparkling) {
-            gridTag[gIdx] = isJustWritten ? GLINT : (sparkleBurst > 0.75 ? GLINT : FIRE_R);
+            // Sparkling star point
+            gridTag[gIdx] = isJustWritten ? GLINT : (sparkleBurst > 0.85 ? GLINT : FIRE_R);
             gridLum[gIdx] = 1.0;
-            gridChar[gIdx] = AT["*"] || AT["+"];
+            gridChar[gIdx] = isJustWritten ? AT["*"] : (sparkleBurst > 0.85 ? AT["*"] : AT["+"]);
             letterCount++;
 
-            // Occasional micro-rays shooting from cursive crests
-            if (isJustWritten || sparkleBurst > 0.88) {
-              if ((cell.x + Math.floor(curT * 8)) % 7 === 0) {
-                drawRays(gridChar, gridLum, gridTag, cell.y, cell.x, 2, ROWS, COLS, 0.5);
-              }
+            // Subtle gentle micro-rays only on brightest write-head
+            if (isJustWritten && cell.x % 4 === 0) {
+              drawRays(gridChar, gridLum, gridTag, cell.y, cell.x, 1, ROWS, COLS, 0.4);
             }
           } else {
-            // Rich red ASCII letters matching rose bloom
-            gridTag[gIdx] = cell.alpha > 0.7 ? PETAL : EDGE;
-            gridLum[gIdx] = Math.max(0.75, Math.min(1.0, 0.65 + 0.35 * cell.alpha + 0.15 * Math.sin(curT * 2 + cell.x * 0.2)));
-            // Dynamic character shimmer from rose pools
-            const charChoice = (cell.x * 7 + cell.y * 13 + Math.floor(curT * 3)) % 12;
-            gridChar[gIdx] = FILL[3][charChoice];
+            // Elegant cursive red characters matching rose aesthetic
+            gridTag[gIdx] = cell.density > 0.65 ? PETAL : EDGE;
+            gridLum[gIdx] = Math.max(0.60, Math.min(0.95, 0.60 + 0.35 * cell.density + 0.12 * Math.sin(curT * 2.5 + cell.x * 0.25)));
+
+            const chIdx = (cell.x * 3 + cell.y * 7 + Math.floor(curT * 2)) % CURSIVE_CHARS.length;
+            const chosenChar = CURSIVE_CHARS[chIdx];
+            gridChar[gIdx] = AT[chosenChar] || AT["+"];
             letterCount++;
           }
         }
