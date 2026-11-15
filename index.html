@@ -87,8 +87,72 @@
       color: rgba(255, 255, 255, 0.25);
       font-size: 13px;
     }
+
+    /* Elegant Glowing Cursive Title */
+    .romantic-title {
+      position: absolute;
+      top: 36px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Great Vibes', cursive, 'Dancing Script', 'Brush Script MT', sans-serif;
+      font-size: 52px;
+      font-weight: 400;
+      letter-spacing: 2px;
+      color: #ff3355;
+      text-shadow:
+        0 0 10px rgba(255, 51, 85, 0.9),
+        0 0 25px rgba(255, 34, 64, 0.8),
+        0 0 45px rgba(255, 120, 146, 0.6),
+        0 0 70px rgba(255, 34, 64, 0.4);
+      pointer-events: none;
+      white-space: nowrap;
+      animation: cursivePulse 3s ease-in-out infinite alternate;
+      z-index: 10;
+    }
+
+    .romantic-title .sparkle {
+      position: absolute;
+      color: #ffffff;
+      font-size: 18px;
+      text-shadow: 0 0 8px #ffffff, 0 0 16px #ff7892;
+      animation: sparkleTwinkle 2.2s ease-in-out infinite;
+    }
+
+    .romantic-title .sparkle-1 { top: -6px; left: -24px; animation-delay: 0s; }
+    .romantic-title .sparkle-2 { top: -10px; right: -28px; animation-delay: 0.7s; }
+    .romantic-title .sparkle-3 { bottom: -2px; left: 45%; animation-delay: 1.4s; font-size: 14px; }
+
+    @keyframes cursivePulse {
+      0% {
+        opacity: 0.88;
+        text-shadow:
+          0 0 8px rgba(255, 51, 85, 0.8),
+          0 0 20px rgba(255, 34, 64, 0.6),
+          0 0 35px rgba(255, 120, 146, 0.4);
+        transform: translateX(-50%) scale(0.99);
+      }
+      100% {
+        opacity: 1;
+        text-shadow:
+          0 0 12px rgba(255, 255, 255, 0.95),
+          0 0 28px rgba(255, 51, 85, 0.9),
+          0 0 55px rgba(255, 34, 64, 0.75),
+          0 0 85px rgba(255, 120, 146, 0.5);
+        transform: translateX(-50%) scale(1.02);
+      }
+    }
+
+    @keyframes sparkleTwinkle {
+      0%, 100% { opacity: 0.2; transform: scale(0.6) rotate(0deg); }
+      50% { opacity: 1; transform: scale(1.3) rotate(45deg); }
+    }
+
     /* Mobile / touch hints */
     @media (max-width: 768px) {
+      .romantic-title {
+        font-size: 38px;
+        top: 24px;
+      }
       .hud-sign, .hud-stat1, .hud-stat2 {
         left: 20px;
         font-size: 12px;
@@ -105,6 +169,12 @@
   <div id="container">
     <canvas id="screen" width="1080" height="960"></canvas>
     <div id="ui">
+      <div class="romantic-title">
+        <span class="sparkle sparkle-1">✦</span>
+        Tammi forever
+        <span class="sparkle sparkle-2">✦</span>
+        <span class="sparkle sparkle-3">✦</span>
+      </div>
       <div class="hud-sign">@jin_22ee · 2026</div>
       <div class="hud-stat1" id="hudStat1">bloom   0.0%   sway 000.00°</div>
       <div class="hud-stat2" id="hudStat2">letters 00,000</div>
@@ -786,82 +856,7 @@
     const gridGx = new Float32Array(TOTAL_CELLS);
     const gridGy = new Float32Array(TOTAL_CELLS);
 
-    // -------------------------------------------------------------
-    // "Tammi forever" Cursive ASCII Text Engine
-    // -------------------------------------------------------------
-    // Placed in the clear area above the flower bud (rows 2 to 7)
-    // High-resolution sampling with delicate stroke thinning
-    const highCanvas = document.createElement("canvas");
-    highCanvas.width = W;
-    highCanvas.height = H;
-    const highCtx = highCanvas.getContext("2d", { willReadFrequently: true });
 
-    let textCells = [];
-
-    function buildTextMask() {
-      highCtx.clearRect(0, 0, W, H);
-      highCtx.fillStyle = "#ffffff";
-      // Elegant flowing cursive script font
-      highCtx.font = "italic 44px 'Great Vibes', 'Dancing Script', 'Brush Script MT', cursive, sans-serif";
-      highCtx.textAlign = "center";
-      highCtx.textBaseline = "middle";
-
-      // Render at Y ~ 72px (corresponds to grid row ~5, cleanly above the rose blossom)
-      const textCenterX = W / 2;
-      const textCenterY = 72;
-      highCtx.fillText("Tammi forever", textCenterX, textCenterY);
-
-      const imgData = highCtx.getImageData(0, 0, W, H).data;
-      textCells = [];
-
-      let minX = 999, maxX = -999;
-
-      // Sample grid cells to determine text presence
-      for (let iy = 1; iy <= 9; iy++) {
-        for (let ix = 15; ix < COLS - 15; ix++) {
-          const xCenter = ix * CW + CW / 2;
-          const yCenter = iy * CH + CH / 2;
-
-          // Check cell intensity with 3x3 sub-sampling
-          let coverage = 0;
-          for (let sy = -4; sy <= 4; sy += 4) {
-            for (let sx = -3; sx <= 3; sx += 3) {
-              const px = Math.floor(xCenter + sx);
-              const py = Math.floor(yCenter + sy);
-              if (px >= 0 && px < W && py >= 0 && py < H) {
-                const alpha = imgData[(py * W + px) * 4 + 3];
-                if (alpha > 60) coverage++;
-              }
-            }
-          }
-
-          if (coverage >= 2) {
-            const gIdx = iy * COLS + ix;
-            textCells.push({
-              x: ix,
-              y: iy,
-              idx: gIdx,
-              density: coverage / 9
-            });
-            if (ix < minX) minX = ix;
-            if (ix > maxX) maxX = ix;
-          }
-        }
-      }
-
-      // Calculate horizontal progression for smooth cursive write-on
-      const span = Math.max(1, maxX - minX);
-      for (let i = 0; i < textCells.length; i++) {
-        textCells[i].prog = (textCells[i].x - minX) / span;
-      }
-    }
-
-    buildTextMask();
-    if (document.fonts) {
-      document.fonts.ready.then(() => {
-        buildTextMask();
-      });
-    }
 
     let t = 0.0;
     let paused = false;
@@ -1302,58 +1297,7 @@
         drawRays(gridChar, gridLum, gridTag, item.cy, item.cx, reach, ROWS, COLS, 0.6);
       }
 
-      // -------------------------------------------------------------
-      // Animate "Tammi forever" Cursive ASCII text with Sparkles
-      // -------------------------------------------------------------
-      if (textCells.length > 0) {
-        // Revealed in sync with rose drawing (starts at t=1.2s, writes out across 3.8s)
-        const textStart = 1.0;
-        const textDuration = 3.6;
-        const textProg = Math.max(0, Math.min(1.0, (curT - textStart) / textDuration));
 
-        // Light & delicate cursive ASCII character palette
-        const CURSIVE_CHARS = ["~", "-", "/", "\\", "r", "c", "v", "x", "z", "+", "i", "l"];
-
-        for (let ci = 0; ci < textCells.length; ci++) {
-          const cell = textCells[ci];
-          // Write-on reveal threshold
-          if (textProg < cell.prog) continue;
-
-          const gIdx = cell.idx;
-          // Avoid overwriting rose if any particle or ray is there
-          if (gridPart[gIdx] >= 0) continue;
-
-          const writeAge = textProg - cell.prog;
-          const isJustWritten = writeAge >= 0 && writeAge < 0.08 && textProg < 0.99;
-
-          // Sparkle wave & twinkling across the letters
-          const twSin = Math.sin(curT * 5.0 + cell.x * 0.4 + cell.y * 0.8);
-          const sparkleBurst = Math.pow(Math.max(0, twSin), 6);
-          const isSparkling = sparkleBurst > 0.55 || isJustWritten;
-
-          if (isSparkling) {
-            // Sparkling star point
-            gridTag[gIdx] = isJustWritten ? GLINT : (sparkleBurst > 0.85 ? GLINT : FIRE_R);
-            gridLum[gIdx] = 1.0;
-            gridChar[gIdx] = isJustWritten ? AT["*"] : (sparkleBurst > 0.85 ? AT["*"] : AT["+"]);
-            letterCount++;
-
-            // Subtle gentle micro-rays only on brightest write-head
-            if (isJustWritten && cell.x % 4 === 0) {
-              drawRays(gridChar, gridLum, gridTag, cell.y, cell.x, 1, ROWS, COLS, 0.4);
-            }
-          } else {
-            // Elegant cursive red characters matching rose aesthetic
-            gridTag[gIdx] = cell.density > 0.65 ? PETAL : EDGE;
-            gridLum[gIdx] = Math.max(0.60, Math.min(0.95, 0.60 + 0.35 * cell.density + 0.12 * Math.sin(curT * 2.5 + cell.x * 0.25)));
-
-            const chIdx = (cell.x * 3 + cell.y * 7 + Math.floor(curT * 2)) % CURSIVE_CHARS.length;
-            const chosenChar = CURSIVE_CHARS[chIdx];
-            gridChar[gIdx] = AT[chosenChar] || AT["+"];
-            letterCount++;
-          }
-        }
-      }
 
       // -------------------------------------------------------------
       // Render to Canvases (Char Atlas + Color Multiplying + Fade Trail)
