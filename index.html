@@ -1,0 +1,1338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rose - JIN2</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    body {
+      background-color: #000;
+      color: #eee;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: consolas, menlo, "dejavu sans mono", "courier new", monospace;
+    }
+    #container {
+      position: relative;
+      width: 1080px;
+      height: 960px;
+      max-width: 100vw;
+      max-height: 100vh;
+      aspect-ratio: 1080 / 960;
+      background: #000;
+      box-shadow: 0 0 50px rgba(255, 34, 64, 0.15);
+    }
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #ui {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      font-size: 16px;
+      letter-spacing: 0.5px;
+    }
+    .hud-sign {
+      position: absolute;
+      left: 64px;
+      bottom: 96px;
+      color: rgb(120, 112, 128);
+    }
+    .hud-stat1 {
+      position: absolute;
+      left: 64px;
+      bottom: 70px;
+      color: rgb(110, 104, 120);
+      white-space: pre;
+    }
+    .hud-stat2 {
+      position: absolute;
+      left: 64px;
+      bottom: 44px;
+      color: rgb(110, 104, 120);
+    }
+    .hud-time {
+      position: absolute;
+      right: 64px;
+      top: 30px;
+      color: rgb(255, 122, 182);
+      font-weight: bold;
+      white-space: pre;
+    }
+    .controls-hint {
+      position: absolute;
+      right: 64px;
+      bottom: 44px;
+      color: rgba(255, 255, 255, 0.25);
+      font-size: 13px;
+    }
+    /* Mobile / touch hints */
+    @media (max-width: 768px) {
+      .hud-sign, .hud-stat1, .hud-stat2 {
+        left: 20px;
+        font-size: 12px;
+      }
+      .hud-sign { bottom: 64px; }
+      .hud-stat1 { bottom: 44px; }
+      .hud-stat2 { bottom: 24px; }
+      .hud-time { right: 20px; top: 15px; font-size: 13px; }
+      .controls-hint { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <canvas id="screen" width="1080" height="960"></canvas>
+    <div id="ui">
+      <div class="hud-sign">@jin_22ee · 2026</div>
+      <div class="hud-stat1" id="hudStat1">bloom   0.0%   sway 000.00°</div>
+      <div class="hud-stat2" id="hudStat2">letters 00,000</div>
+      <div class="hud-time" id="hudTime">● t 00.00s</div>
+      <div class="controls-hint">[Space] Pause &nbsp; [R] Restart</div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    // -------------------------------------------------------------
+    // Constants matching rose.py exactly
+    // -------------------------------------------------------------
+    const PI = Math.PI;
+    const TAU = PI * 2;
+    const LOOP = 20.0;
+    const FLOOR = -1.22;
+    const HEAD_Y = 0.22;
+
+    const POOLS = ["1il!;:", "rtfjcvxz=+", "aeoun0{}[]<>", "08B$#&%Q"];
+    const CHARS = " .,:~+*^01|/\\-_#()x" + POOLS.join("");
+    const AT = {};
+    for (let i = 0; i < CHARS.length; i++) AT[CHARS[i]] = i;
+
+    // Fill table
+    const FILL = [];
+    for (let p = 0; p < POOLS.length; p++) {
+      const pool = POOLS[p];
+      const row = new Int32Array(12);
+      for (let k = 0; k < 12; k++) {
+        row[k] = AT[pool[k % pool.length]];
+      }
+      FILL.push(row);
+    }
+
+    // Material tags
+    const STEM = 0, LEAF = 1, SEPAL = 2, PETAL = 3, EDGE = 4,
+          GLINT = 5, FIRE_R = 6, FIRE_B = 7, DUST = 8, REFL = 9;
+
+    // Dimensions
+    const CW = 9, CH = 14, FONT_PX = 15;
+    const W = 1080, H = 960;
+    const COLS = Math.floor(W / CW); // 120
+    const ROWS = Math.floor(H / CH); // 68
+    const ASPECT = (COLS * CW) / (ROWS * CH);
+
+    // Color definitions (RGB floats 0..1)
+    const COLORS = [
+      [70/255, 214/255, 96/255],   // STEM
+      [52/255, 196/255, 84/255],   // LEAF
+      [80/255, 206/255, 100/255],  // SEPAL
+      [255/255, 34/255, 64/255],   // PETAL
+      [255/255, 120/255, 146/255], // EDGE
+      [255/255, 255/255, 255/255], // GLINT
+      [255/255, 176/255, 204/255], // FIRE_R
+      [188/255, 220/255, 255/255], // FIRE_B
+      [255/255, 214/255, 150/255], // DUST
+      [140/255, 60/255, 76/255]    // REFL
+    ];
+
+    function smooth(x) {
+      const c = Math.max(0, Math.min(1, x));
+      return c * c * (3 - 2 * c);
+    }
+
+    // Pseudo Random Number Generator (LCG / Mulberry32)
+    function mulberry32(seed) {
+      return function() {
+        let t = seed += 0x6D2B79F5;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    // -------------------------------------------------------------
+    // Geometry Generation
+    // -------------------------------------------------------------
+    function stemCurve(s) {
+      const y = -1.15 + s * (HEAD_Y + 1.15);
+      const x = 0.045 * Math.sin(s * 3.1 + 0.4) - 0.02;
+      const z = 0.02 * Math.sin(s * 2.0);
+      return [x, y, z];
+    }
+
+    // Stem
+    const stemPoints = [];
+    const stemNormals = [];
+    const stemS = [];
+    {
+      const NS = 260;
+      const NPHI = 14;
+      for (let j = 0; j < NPHI; j++) {
+        const phi = (j / NPHI) * TAU;
+        const cosPhi = Math.cos(phi);
+        const sinPhi = Math.sin(phi);
+        for (let i = 0; i < NS; i++) {
+          const s = i / (NS - 1);
+          const c = stemCurve(s);
+          const r = 0.026 + 0.006 * (1 - s);
+          const nx = cosPhi, ny = 0, nz = sinPhi;
+          stemPoints.push([c[0] + nx * r, c[1] + ny * r, c[2] + nz * r]);
+          stemNormals.push([nx, ny, nz]);
+          stemS.push(s);
+        }
+      }
+    }
+    const N_STEM = stemPoints.length;
+
+    // Leaves
+    function createLeaf(at, side, length, lift, twist) {
+      const SW = 25, SL = 70;
+      const base = stemCurve(at);
+      let dx = side * Math.cos(lift);
+      let dy = Math.sin(lift);
+      let dz = 0.25 * twist;
+      const dlen = Math.hypot(dx, dy, dz);
+      dx /= dlen; dy /= dlen; dz /= dlen;
+
+      // wide = cross(d, [0, 0, 1])
+      let wx = dy * 1.0 - dz * 0.0;
+      let wy = dz * 0.0 - dx * 1.0;
+      let wz = dx * 0.0 - dy * 0.0;
+      const wlen = Math.hypot(wx, wy, wz);
+      wx /= wlen; wy /= wlen; wz /= wlen;
+
+      // up = cross(wide, d)
+      const ux = wy * dz - wz * dy;
+      const uy = wz * dx - wx * dz;
+      const uz = wx * dy - wy * dx;
+
+      const pGrid = []; // [25][70][3]
+      const sGrid = [];
+
+      for (let iw = 0; iw < SW; iw++) {
+        const w = -1.0 + (2.0 * iw) / (SW - 1);
+        const pRow = [];
+        const sRow = [];
+        for (let is = 0; is < SL; is++) {
+          const s = is / (SL - 1);
+          const sinS = Math.sin(PI * Math.max(0, Math.min(1, s)));
+          const hw = 0.15 * Math.pow(Math.max(0, sinS), 0.75) * length / 0.42;
+
+          const px = base[0] + dx * 0.07 + dx * (s * length) + wx * (w * hw) + ux * (0.05 * Math.abs(w) - 0.10 * s * s);
+          const py = base[1] + dy * 0.07 + dy * (s * length) + wy * (w * hw) + uy * (0.05 * Math.abs(w) - 0.10 * s * s);
+          const pz = base[2] + dz * 0.07 + dz * (s * length) + wz * (w * hw) + uz * (0.05 * Math.abs(w) - 0.10 * s * s);
+
+          pRow.push([px, py, pz]);
+          sRow.push(s);
+        }
+        pGrid.push(pRow);
+        sGrid.push(sRow);
+      }
+
+      const points = [];
+      const normals = [];
+      const sVals = [];
+
+      for (let iw = 0; iw < SW; iw++) {
+        for (let is = 0; is < SL; is++) {
+          // du along is
+          const is0 = Math.max(0, is - 1);
+          const is1 = Math.min(SL - 1, is + 1);
+          const duScale = 1.0 / ((is1 - is0) || 1);
+          const dux = (pGrid[iw][is1][0] - pGrid[iw][is0][0]) * duScale;
+          const duy = (pGrid[iw][is1][1] - pGrid[iw][is0][1]) * duScale;
+          const duz = (pGrid[iw][is1][2] - pGrid[iw][is0][2]) * duScale;
+
+          // dv along iw
+          const iw0 = Math.max(0, iw - 1);
+          const iw1 = Math.min(SW - 1, iw + 1);
+          const dvScale = 1.0 / ((iw1 - iw0) || 1);
+          const dvx = (pGrid[iw1][is][0] - pGrid[iw0][is][0]) * dvScale;
+          const dvy = (pGrid[iw1][is][1] - pGrid[iw0][is][1]) * dvScale;
+          const dvz = (pGrid[iw1][is][2] - pGrid[iw0][is][2]) * dvScale;
+
+          // normal = cross(du, dv)
+          let nx = duy * dvz - duz * dvy;
+          let ny = duz * dvx - dux * dvz;
+          let nz = dux * dvy - duy * dvx;
+          let nlen = Math.hypot(nx, ny, nz) + 1e-9;
+          nx /= nlen; ny /= nlen; nz /= nlen;
+
+          const dotUp = nx * ux + ny * uy + nz * uz + 1e-9;
+          const sgn = dotUp >= 0 ? 1 : -1;
+          normals.push([nx * sgn, ny * sgn, nz * sgn]);
+          points.push(pGrid[iw][is]);
+          sVals.push(sGrid[iw][is]);
+        }
+      }
+      return { points, normals, sVals };
+    }
+
+    const LEAF_AT = [0.32, 0.55];
+    const LEAVES = [
+      createLeaf(LEAF_AT[0], -1, 0.42, 0.35, 1),
+      createLeaf(LEAF_AT[1],  1, 0.36, 0.45, -1)
+    ];
+
+    // Sepals
+    const SEP_S = [], SEP_W = [];
+    const N_SEP_S = 34, N_SEP_W = 9;
+    for (let iw = 0; iw < N_SEP_W; iw++) {
+      const w = -1.0 + (2.0 * iw) / (N_SEP_W - 1);
+      for (let is = 0; is < N_SEP_S; is++) {
+        SEP_S.push(is / (N_SEP_S - 1));
+        SEP_W.push(w);
+      }
+    }
+    const SEP_LEN = SEP_S.length; // 34 * 9 = 306
+    const N_SEPAL = 5 * SEP_LEN;
+
+    function createSepals(open_) {
+      const P = [];
+      const N = [];
+      for (let i = 0; i < 5; i++) {
+        const a = (TAU * i) / 5 + 0.3;
+        for (let k = 0; k < SEP_LEN; k++) {
+          const s = SEP_S[k];
+          const w = SEP_W[k];
+          const beta = (1.05 + 0.35 * open_) + (0.55 + 0.75 * open_) * s;
+          const L = 0.36 - 0.06 * open_;
+          const r = 0.045 + L * s * Math.sin(beta);
+          const ang = a + w * 0.10 * Math.pow(1 - s, 1.3) / Math.max(r / 0.2, 0.25);
+          const y = HEAD_Y + 0.02 + L * s * Math.cos(beta);
+          const px = Math.cos(ang) * r;
+          const py = y;
+          const pz = Math.sin(ang) * r;
+
+          let nx = Math.cos(ang) * Math.cos(beta);
+          let ny = -Math.sin(beta);
+          let nz = Math.sin(ang) * Math.cos(beta);
+          const nlen = Math.hypot(nx, ny, nz) || 1;
+          P.push([px, py, pz]);
+          N.push([nx / nlen, ny / nlen, nz / nlen]);
+        }
+      }
+      return { points: P, normals: N };
+    }
+
+    // Bloom Petals
+    const NT = 1300, NX = 40;
+    const TH_MIN = 2.2 * PI, TH_MAX = 20 * PI;
+    const SIZE = 0.80;
+
+    const PETAL_TH = new Float32Array(NX * NT);
+    const PETAL_XX = new Float32Array(NX * NT);
+    const PETAL_THN = new Float32Array(NX * NT);
+    const PETAL_ID = new Int32Array(NX * NT);
+    const PETAL_J = new Int32Array(NX * NT);
+    const PETAL_SJ = new Float32Array(NX * NT);
+    const PETAL_V = new Float32Array(NX * NT);
+    const PETAL_EDGE = new Uint8Array(NX * NT);
+
+    let minPetalId = 999999;
+    for (let ix = 0; ix < NX; ix++) {
+      const xVal = ix / (NX - 1);
+      for (let it = 0; it < NT; it++) {
+        const idx = ix * NT + it;
+        const thVal = TH_MIN + (it / (NT - 1)) * (TH_MAX - TH_MIN);
+        PETAL_TH[idx] = thVal;
+        PETAL_XX[idx] = xVal;
+        const thn = (thVal - TH_MIN) / (TH_MAX - TH_MIN);
+        PETAL_THN[idx] = thn;
+        const pid = Math.floor(3.6 * thVal / TAU);
+        PETAL_ID[idx] = pid;
+        if (pid < minPetalId) minPetalId = pid;
+        PETAL_SJ[idx] = 1 - thn;
+        PETAL_V[idx] = xVal;
+        PETAL_EDGE[idx] = xVal > 0.93 ? 1 : 0;
+      }
+    }
+    for (let i = 0; i < NX * NT; i++) {
+      PETAL_J[i] = PETAL_ID[i] - minPetalId;
+    }
+
+    function createPetals(open_) {
+      const A = 1.60 + 4.00 * open_;
+      const wOpen = smooth(open_ / 0.6);
+      const syMult = 0.84 + 0.16 * open_;
+      const sxzMult = 1.05 - 0.05 * open_;
+
+      // Grid [NX][NT][3]
+      const grid = new Float32Array(NX * NT * 3);
+
+      for (let ix = 0; ix < NX; ix++) {
+        for (let it = 0; it < NT; it++) {
+          const idx = ix * NT + it;
+          const th = PETAL_TH[idx];
+          const xx = PETAL_XX[idx];
+          const thn = PETAL_THN[idx];
+
+          const phi = (PI / 2) * Math.exp(-th / (A * PI));
+          const modTerm = (3.6 * th) % TAU;
+          const subTerm = 1.25 * Math.pow(1 - modTerm / PI, 2) - 0.25;
+          const X = 1 - 0.5 * Math.pow(subTerm, 2);
+          const yy = 1.95653 * Math.pow(xx, 2) * Math.pow(1.27689 * xx - 1, 2) * Math.sin(phi);
+          const r = X * (xx * Math.sin(phi) + yy * Math.cos(phi));
+
+          let px = r * Math.sin(th) * SIZE * sxzMult;
+          let py = (X * (xx * Math.cos(phi) - yy * Math.sin(phi)) * SIZE * syMult) + HEAD_Y;
+          let pz = r * Math.cos(th) * SIZE * sxzMult;
+
+          // Bud
+          const h = xx;
+          const rBud = (0.170 * Math.pow(h, 0.70) * Math.pow(Math.max(0, 1 - h), 0.75) / 0.367 * (1 - 0.30 * thn) + 0.003);
+          const bx = rBud * Math.sin(th);
+          const by = HEAD_Y + 0.03 + 0.52 * h * (1 - 0.06 * thn);
+          const bz = rBud * Math.cos(th);
+
+          const ptr = idx * 3;
+          grid[ptr]     = bx * (1 - wOpen) + px * wOpen;
+          grid[ptr + 1] = by * (1 - wOpen) + py * wOpen;
+          grid[ptr + 2] = bz * (1 - wOpen) + pz * wOpen;
+        }
+      }
+
+      const points = [];
+      const normals = [];
+
+      // Compute gradients du (along it), dv (along ix)
+      for (let ix = 0; ix < NX; ix++) {
+        const ix0 = Math.max(0, ix - 1);
+        const ix1 = Math.min(NX - 1, ix + 1);
+        const dvScale = 1.0 / ((ix1 - ix0) || 1);
+
+        for (let it = 0; it < NT; it++) {
+          const idx = ix * NT + it;
+          const it0 = Math.max(0, it - 1);
+          const it1 = Math.min(NT - 1, it + 1);
+          const duScale = 1.0 / ((it1 - it0) || 1);
+
+          const ptrC = idx * 3;
+          const ptrU0 = (ix * NT + it0) * 3;
+          const ptrU1 = (ix * NT + it1) * 3;
+          const ptrV0 = (ix0 * NT + it) * 3;
+          const ptrV1 = (ix1 * NT + it) * 3;
+
+          const dux = (grid[ptrU1]     - grid[ptrU0])     * duScale;
+          const duy = (grid[ptrU1 + 1] - grid[ptrU0 + 1]) * duScale;
+          const duz = (grid[ptrU1 + 2] - grid[ptrU0 + 2]) * duScale;
+
+          const dvx = (grid[ptrV1]     - grid[ptrV0])     * dvScale;
+          const dvy = (grid[ptrV1 + 1] - grid[ptrV0 + 1]) * dvScale;
+          const dvz = (grid[ptrV1 + 2] - grid[ptrV0 + 2]) * dvScale;
+
+          // normal = cross(du, dv)
+          let nx = duy * dvz - duz * dvy;
+          let ny = duz * dvx - dux * dvz;
+          let nz = dux * dvy - duy * dvx;
+          let nlen = Math.hypot(nx, ny, nz) + 1e-9;
+          nx /= nlen; ny /= nlen; nz /= nlen;
+
+          const th = PETAL_TH[idx];
+          const outX = Math.sin(th);
+          const outY = 0.2;
+          const outZ = Math.cos(th);
+          const dotOut = (nx * outX + ny * outY + nz * outZ) + 1e-9;
+          const sgn = dotOut >= 0 ? 1 : -1;
+
+          points.push([grid[ptrC], grid[ptrC + 1], grid[ptrC + 2]]);
+          normals.push([nx * sgn, ny * sgn, nz * sgn]);
+        }
+      }
+
+      return { points, normals };
+    }
+
+    function bloom(t) {
+      const u = Math.max(0, Math.min(1, (t - 5.5) / 9.0));
+      return u * (2 - u) * 0.55 + u * u * (3 - 2 * u) * 0.45;
+    }
+
+    // Drawing reveal orders
+    const O_STEM = stemS;
+    const O_LEAF = [
+      LEAVES[0].sVals.map(s => LEAF_AT[0] + 0.05 + s * 0.25),
+      LEAVES[1].sVals.map(s => LEAF_AT[1] + 0.05 + s * 0.25)
+    ];
+    const O_SEPAL = [];
+    for (let i = 0; i < 5; i++) {
+      for (let k = 0; k < SEP_LEN; k++) {
+        O_SEPAL.push(1.0 + 0.10 * SEP_S[k]);
+      }
+    }
+    const O_PETAL = new Float32Array(NX * NT);
+    for (let i = 0; i < NX * NT; i++) {
+      O_PETAL[i] = 1.10 + PETAL_V[i] * 0.42 + PETAL_SJ[i] * 0.10;
+    }
+    const O_MAX = 1.66;
+    const DRAW_START = 0.3, DRAW_END = 5.4;
+
+    function reveal(orderVal, t) {
+      const head = (t - DRAW_START) / (DRAW_END - DRAW_START) * O_MAX;
+      const soft = orderVal >= 1.0 ? 0.09 : 0.05;
+      const k = smooth((head - orderVal) / soft);
+      const tip = (Math.abs(head - orderVal) < 0.03) && (orderVal < 1.0);
+      return { k, tip };
+    }
+
+    function lights(t) {
+      let kx = -0.35, ky = 0.85, kz = 0.65;
+      let klen = Math.hypot(kx, ky, kz);
+      kx /= klen; ky /= klen; kz /= klen;
+
+      let rx = Math.cos(t * 0.8), ry = 0.4, rz = Math.sin(t * 0.8);
+      let rlen = Math.hypot(rx, ry, rz);
+      rx /= rlen; ry /= rlen; rz /= rlen;
+
+      return { key: [kx, ky, kz], rim: [rx, ry, rz] };
+    }
+
+    function sway(t) {
+      return 0.22 * Math.sin(Math.max(t - 7.0, 0) * 0.35) * smooth((t - 7.0) / 4.0);
+    }
+
+    function rotY(px, py, pz, a) {
+      const c = Math.cos(a), s = Math.sin(a);
+      return [c * px + s * pz, py, -s * px + c * pz];
+    }
+
+    // Sparks and Glitter seeds
+    const rngSparks = mulberry32(13);
+    const SPK = [];
+    for (let i = 0; i < 1600; i++) {
+      SPK.push([rngSparks(), rngSparks(), rngSparks(), rngSparks(), rngSparks()]);
+    }
+
+    function sparks(t, tipPts) {
+      if (tipPts.length === 0 || t > DRAW_END + 0.2) {
+        return { P: [], S: [], T: [] };
+      }
+      const P = [], S = [], T = [];
+      for (let i = 0; i < SPK.length; i++) {
+        const s = SPK[i];
+        const k = Math.floor(s[0] * tipPts.length) % tipPts.length;
+        const age = (t * 1.7 + s[1]) % 1.0;
+        const a = s[2] * TAU;
+        const speed = 0.3 + 0.5 * s[3];
+        const vx = Math.cos(a) * speed;
+        const vy = 0.3 + 0.7 * s[4];
+        const vz = Math.sin(a) * speed;
+
+        const ageScale = age * 0.55;
+        const px = tipPts[k][0] + vx * ageScale;
+        const py = tipPts[k][1] + vy * ageScale - 0.5 * 1.4 * ageScale * ageScale;
+        const pz = tipPts[k][2] + vz * ageScale;
+
+        const glow = Math.pow(1 - age, 1.4) * (0.6 + 0.4 * Math.sin(age * 25 + a));
+        P.push([px, py, pz]);
+        S.push(glow);
+        T.push(s[3] > 0.6 ? GLINT : DUST);
+      }
+      return { P, S, T };
+    }
+
+    const rngGlitter = mulberry32(21);
+    const GLITTER = [];
+    for (let i = 0; i < 700; i++) {
+      GLITTER.push([rngGlitter(), rngGlitter(), rngGlitter(), rngGlitter(), rngGlitter()]);
+    }
+
+    function glitter(t) {
+      const P = [], S = [], T = [];
+      for (let i = 0; i < GLITTER.length; i++) {
+        const g = GLITTER[i];
+        const a = g[0] * TAU + t * (0.05 + 0.08 * g[1]);
+        const r = 0.55 + 1.6 * Math.pow(g[2], 0.7);
+        const y = -1.1 + 2.3 * g[3] + 0.05 * Math.sin(t * 0.6 + g[4] * TAU);
+        const px = Math.cos(a) * r;
+        const py = y;
+        const pz = Math.sin(a) * r * 0.6 - 0.35;
+
+        const sinTw = Math.max(0, Math.sin(t * (1.2 + 2.5 * g[1]) + g[4] * 40));
+        const tw = Math.pow(sinTw, 6);
+        const glow = (0.10 + 0.85 * tw) * smooth((t - 1.0 - g[3] * 3.0) / 1.5);
+        let kind = GLINT;
+        if (g[4] < 0.12) kind = FIRE_B;
+        else if (g[4] < 0.3) kind = FIRE_R;
+
+        P.push([px, py, pz]);
+        S.push(glow);
+        T.push(kind);
+      }
+      return { P, S, T };
+    }
+
+    // Dew drops
+    const rngDew = mulberry32(31);
+    const DEW = [];
+    for (let i = 0; i < 40; i++) DEW.push([rngDew(), rngDew()]);
+
+    const rngSplash = mulberry32(51);
+    const SPLASH = [];
+    for (let i = 0; i < 8; i++) SPLASH.push([rngSplash(), rngSplash()]);
+
+    // Find drop petal tips from full open
+    const openPetalsRef = createPetals(1.0).points;
+    const lowIndices = [];
+    for (let i = 0; i < NX * NT; i++) {
+      if (PETAL_SJ[i] > 0.7 && PETAL_V[i] > 0.82) lowIndices.push(i);
+    }
+    lowIndices.sort((a, b) => openPetalsRef[a][1] - openPetalsRef[b][1]);
+    const DROP_AT = [];
+    for (let i = 0; i < Math.min(400, lowIndices.length); i += 67) {
+      DROP_AT.push(lowIndices[i]);
+    }
+    const DROP_T0 = [13.4, 13.4 + 1.5, 13.4 + 2.8, 13.4 + 4.0];
+    const G_DROP = 1.7;
+
+    function dewDrops(t, flowerPoints) {
+      const P = [], S = [], T = [];
+      for (let di = 0; di < DROP_AT.length; di++) {
+        const idx = DROP_AT[di];
+        const t0 = DROP_T0[di];
+        const tau = t - t0;
+        if (tau < 0) continue;
+        const hang = 1.4;
+        const start = [
+          flowerPoints[idx][0] + 0,
+          flowerPoints[idx][1] - 0.012,
+          flowerPoints[idx][2] + 0.01
+        ];
+
+        if (tau < hang) {
+          const g = 0.006 + 0.012 * tau / hang;
+          const offsets = [
+            [0, 0, 0], [g, 0, 0], [-g, 0, 0], [0, -g, 0], [0, -2 * g, 0]
+          ];
+          for (let oi = 0; oi < offsets.length; oi++) {
+            P.push([start[0] + offsets[oi][0], start[1] + offsets[oi][1], start[2] + offsets[oi][2]]);
+            S.push(0.8 + 0.5 * tau / hang);
+            T.push(FIRE_B);
+          }
+          continue;
+        }
+
+        const u = tau - hang;
+        const y = start[1] - 0.5 * G_DROP * u * u;
+        if (y > FLOOR + 0.02) {
+          const v = G_DROP * u;
+          const backs = [0.0, 0.02, 0.04, 0.07, 0.10];
+          for (let j = 0; j < backs.length; j++) {
+            P.push([start[0], y + backs[j] * Math.min(v, 1.2), start[2]]);
+            S.push(1.3 - 0.22 * j);
+            T.push(FIRE_B);
+          }
+        } else {
+          const w = u - Math.sqrt(2 * (start[1] - FLOOR) / G_DROP);
+          if (w <= 0.7) {
+            for (let si = 0; si < SPLASH.length; si++) {
+              const a = SPLASH[si][0] * TAU;
+              const sp = 0.25 + 0.35 * SPLASH[si][1];
+              const px = start[0] + Math.cos(a) * sp * w;
+              const pz = start[2] + Math.sin(a) * sp * w * 0.5;
+              const py = FLOOR + 0.02 + 0.9 * sp * w - 0.5 * G_DROP * w * w;
+              if (py >= FLOOR) {
+                P.push([px, py, pz]);
+                S.push(0.9 * (1 - w / 0.7));
+                T.push(FIRE_B);
+              }
+            }
+          }
+        }
+      }
+      return { P, S, T };
+    }
+
+    // Camera Look
+    const target = [0, -0.05, 0], eye = [0.0, 1.75, 4.0];
+    let fwd = [target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]];
+    let flen = Math.hypot(fwd[0], fwd[1], fwd[2]);
+    fwd = [fwd[0] / flen, fwd[1] / flen, fwd[2] / flen];
+
+    // right = cross(fwd, [0, 1, 0])
+    let right = [fwd[1] * 0 - fwd[2] * 1, fwd[2] * 0 - fwd[0] * 0, fwd[0] * 1 - fwd[1] * 0];
+    let rlen = Math.hypot(right[0], right[1], right[2]);
+    right = [right[0] / rlen, right[1] / rlen, right[2] / rlen];
+
+    // up = cross(right, fwd)
+    let up = [right[1] * fwd[2] - right[2] * fwd[1], right[2] * fwd[0] - right[0] * fwd[2], right[0] * fwd[1] - right[1] * fwd[0]];
+
+    function lookAt(px, py, pz) {
+      const rx = px - eye[0], ry = py - eye[1], rz = pz - eye[2];
+      const x = rx * right[0] + ry * right[1] + rz * right[2];
+      const y = rx * up[0] + ry * up[1] + rz * up[2];
+      const z = rx * fwd[0] + ry * fwd[1] + rz * fwd[2];
+      return [x, y, z];
+    }
+
+    // Rays helper
+    function drawRays(charMap, lumMap, tagMap, cy, cx, reach, strength = 1.0) {
+      for (let dist = 1; dist <= reach; dist++) {
+        const fade = (1 - dist / (reach + 1)) * strength;
+        const straight = [
+          [0, 1, AT["-"]], [0, -1, AT["-"]],
+          [1, 0, AT["|"]], [-1, 0, AT["|"]]
+        ];
+        for (let si = 0; si < straight.length; si++) {
+          const yy = cy + straight[si][0] * dist;
+          const xx = cx + straight[si][1] * dist * 2;
+          if (yy >= 0 && yy < ROWS && xx >= 0 && xx < COLS) {
+            const idx = yy * COLS + xx;
+            if (lumMap[idx] < fade) {
+              charMap[idx] = straight[si][2];
+              lumMap[idx] = fade;
+              tagMap[idx] = GLINT;
+            }
+          }
+        }
+        if (dist <= Math.floor(reach / 2)) {
+          const diag = [
+            [1, 1, AT["\\"]], [-1, -1, AT["\\"]],
+            [1, -1, AT["/"]], [-1, 1, AT["/"]]
+          ];
+          for (let di = 0; di < diag.length; di++) {
+            const yy = cy + diag[di][0] * dist;
+            const xx = cx + diag[di][1] * dist;
+            if (yy >= 0 && yy < ROWS && xx >= 0 && xx < COLS) {
+              const idx = yy * COLS + xx;
+              if (lumMap[idx] < fade * 0.7) {
+                charMap[idx] = diag[di][2];
+                lumMap[idx] = fade * 0.7;
+                tagMap[idx] = GLINT;
+              }
+            }
+          }
+        }
+      }
+      if (cy >= 0 && cy < ROWS && cx >= 0 && cx < COLS) {
+        const idx = cy * COLS + cx;
+        charMap[idx] = AT["*"];
+        lumMap[idx] = 1.0;
+      }
+    }
+
+    // Outline helper
+    function outlineLetter(gx, gy) {
+      const ax = Math.abs(gx), ay = Math.abs(gy);
+      if (ax + ay === 0) return AT["+"];
+      if (ax > 2 * ay) return AT["|"];
+      if (ay > 2 * ax) return gy > 0 ? AT["_"] : AT["-"];
+      if (gx * gy > 0) return AT["/"];
+      return AT["\\"];
+    }
+
+    // -------------------------------------------------------------
+    // Main Rendering Engine
+    // -------------------------------------------------------------
+    const canvas = document.getElementById("screen");
+    const ctx = canvas.getContext("2d");
+
+    // Offscreen trail canvas for persistent phosphor glow/fade
+    const trailCanvas = document.createElement("canvas");
+    trailCanvas.width = W;
+    trailCanvas.height = H;
+    const trailCtx = trailCanvas.getContext("2d");
+
+    // Frame canvas for ASCII characters
+    const frameCanvas = document.createElement("canvas");
+    frameCanvas.width = W;
+    frameCanvas.height = H;
+    const frameCtx = frameCanvas.getContext("2d");
+
+    // Glow buffer
+    const glowCanvas = document.createElement("canvas");
+    glowCanvas.width = W;
+    glowCanvas.height = H;
+    const glowCtx = glowCanvas.getContext("2d");
+
+    // Pre-allocated buffers for performance
+    const TOTAL_CELLS = ROWS * COLS;
+    const gridPart = new Int16Array(TOTAL_CELLS);
+    const gridDepth = new Float32Array(TOTAL_CELLS);
+    const gridLum = new Float32Array(TOTAL_CELLS);
+    const gridTag = new Int8Array(TOTAL_CELLS);
+    const gridChar = new Int32Array(TOTAL_CELLS);
+    const gridEdge = new Uint8Array(TOTAL_CELLS);
+    const gridGx = new Float32Array(TOTAL_CELLS);
+    const gridGy = new Float32Array(TOTAL_CELLS);
+
+    let t = 0.0;
+    let paused = false;
+    let lastTime = performance.now();
+
+    const hudStat1 = document.getElementById("hudStat1");
+    const hudStat2 = document.getElementById("hudStat2");
+    const hudTime = document.getElementById("hudTime");
+
+    function render(timeSeconds) {
+      const curT = timeSeconds;
+      const yaw = sway(curT);
+      const op = bloom(curT);
+
+      const petalMesh = createPetals(op);
+      const sepalMesh = createSepals(op);
+
+      const vel = (sway(curT + 0.05) - sway(curT - 0.05)) / 0.1;
+
+      // Lights
+      const l = lights(curT);
+      const viewDir = [-fwd[0], -fwd[1], -fwd[2]];
+
+      const halfK = [l.key[0] + viewDir[0], l.key[1] + viewDir[1], l.key[2] + viewDir[2]];
+      let hlenK = Math.hypot(halfK[0], halfK[1], halfK[2]) || 1;
+      halfK[0] /= hlenK; halfK[1] /= hlenK; halfK[2] /= hlenK;
+
+      const halfR = [l.rim[0] + viewDir[0], l.rim[1] + viewDir[1], l.rim[2] + viewDir[2]];
+      let hlenR = Math.hypot(halfR[0], halfR[1], halfR[2]) || 1;
+      halfR[0] /= hlenR; halfR[1] /= hlenR; halfR[2] /= hlenR;
+
+      // Body points collection
+      const P_all = [];
+      const shade_all = [];
+      const tag_all = [];
+      const part_all = [];
+      const tip_pts = [];
+
+      // 1. Stem
+      for (let i = 0; i < N_STEM; i++) {
+        const p = stemPoints[i];
+        const n = stemNormals[i];
+        const ord = O_STEM[i];
+        const rev = reveal(ord, curT);
+
+        const pr = rotY(p[0], p[1], p[2], yaw);
+        const nr = rotY(n[0], n[1], n[2], yaw);
+
+        const diff = Math.max(0, nr[0] * l.key[0] + nr[1] * l.key[1] + nr[2] * l.key[2]);
+        const dotHK = Math.max(0, nr[0] * halfK[0] + nr[1] * halfK[1] + nr[2] * halfK[2]);
+        const dotHR = Math.max(0, nr[0] * halfR[0] + nr[1] * halfR[1] + nr[2] * halfR[2]);
+        const spec = Math.pow(dotHK, 24) + 0.7 * Math.pow(dotHR, 18);
+        let sh = (0.62 + 0.60 * diff + 0.25 * spec); // depth = 1.0
+
+        let kind = STEM;
+        let pt = 0;
+        if (rev.k < 0.96) {
+          pt = -2;
+          sh = rev.tip ? 1.2 : 0.0;
+          kind = rev.tip ? GLINT : DUST;
+          if (rev.tip) tip_pts.push(pr);
+        }
+
+        P_all.push(pr);
+        shade_all.push(sh);
+        tag_all.push(kind);
+        part_all.push(pt);
+      }
+
+      // 2. Leaves
+      for (let li = 0; li < 2; li++) {
+        const lf = LEAVES[li];
+        const ords = O_LEAF[li];
+        const partId = 1 + li;
+        for (let i = 0; i < lf.points.length; i++) {
+          const p = lf.points[i];
+          const n = lf.normals[i];
+          const rev = reveal(ords[i], curT);
+
+          const pr = rotY(p[0], p[1], p[2], yaw);
+          const nr = rotY(n[0], n[1], n[2], yaw);
+
+          const diff = Math.max(0, nr[0] * l.key[0] + nr[1] * l.key[1] + nr[2] * l.key[2]);
+          const dotHK = Math.max(0, nr[0] * halfK[0] + nr[1] * halfK[1] + nr[2] * halfK[2]);
+          const dotHR = Math.max(0, nr[0] * halfR[0] + nr[1] * halfR[1] + nr[2] * halfR[2]);
+          const spec = Math.pow(dotHK, 24) + 0.7 * Math.pow(dotHR, 18);
+          let sh = (0.62 + 0.60 * diff + 0.25 * spec);
+
+          let kind = LEAF;
+          let pt = partId;
+          if (rev.k < 0.96) {
+            pt = -2;
+            sh = rev.tip ? 1.2 : 0.0;
+            kind = rev.tip ? GLINT : DUST;
+            if (rev.tip) tip_pts.push(pr);
+          }
+
+          P_all.push(pr);
+          shade_all.push(sh);
+          tag_all.push(kind);
+          part_all.push(pt);
+        }
+      }
+
+      // 3. Sepals
+      for (let i = 0; i < N_SEPAL; i++) {
+        const p = sepalMesh.points[i];
+        const n = sepalMesh.normals[i];
+        const ord = O_SEPAL[i];
+        const rev = reveal(ord, curT);
+
+        const pr = rotY(p[0], p[1], p[2], yaw);
+        const nr = rotY(n[0], n[1], n[2], yaw);
+
+        const diff = Math.max(0, nr[0] * l.key[0] + nr[1] * l.key[1] + nr[2] * l.key[2]);
+        const dotHK = Math.max(0, nr[0] * halfK[0] + nr[1] * halfK[1] + nr[2] * halfK[2]);
+        const dotHR = Math.max(0, nr[0] * halfR[0] + nr[1] * halfR[1] + nr[2] * halfR[2]);
+        const spec = Math.pow(dotHK, 24) + 0.7 * Math.pow(dotHR, 18);
+        let sh = (0.62 + 0.60 * diff + 0.25 * spec);
+
+        let kind = SEPAL;
+        let pt = 3;
+        if (rev.k < 0.96) {
+          pt = -2;
+          sh = rev.tip ? 1.2 : 0.0;
+          kind = rev.tip ? GLINT : DUST;
+          if (rev.tip) tip_pts.push(pr);
+        }
+
+        P_all.push(pr);
+        shade_all.push(sh);
+        tag_all.push(kind);
+        part_all.push(pt);
+      }
+
+      // 4. Petals
+      const N_PETAL_PTS = NX * NT;
+      const rippleVal = 0.010 * Math.sin(curT * 2.4) * smooth((curT - 8.0) / 2.0);
+
+      for (let i = 0; i < N_PETAL_PTS; i++) {
+        let px = petalMesh.points[i][0];
+        let py = petalMesh.points[i][1];
+        let pz = petalMesh.points[i][2];
+
+        const sj = PETAL_SJ[i];
+        const v = PETAL_V[i];
+        const pj = PETAL_J[i];
+        const loose = Math.max(0, Math.min(1, (sj - 0.45) / 0.55)) * v * v * op;
+        const ripple = 0.010 * Math.sin(curT * 2.4 + pj * 1.7) * smooth((curT - 8.0) / 2.0);
+
+        px += -0.10 * vel * loose;
+        py += (ripple - 0.006 * Math.abs(vel)) * loose;
+
+        const pr = rotY(px, py, pz, yaw);
+        const nr = rotY(petalMesh.normals[i][0], petalMesh.normals[i][1], petalMesh.normals[i][2], yaw);
+
+        const ord = O_PETAL[i];
+        const rev = reveal(ord, curT);
+
+        const diff = Math.max(0, nr[0] * l.key[0] + nr[1] * l.key[1] + nr[2] * l.key[2]);
+        const dotHK = Math.max(0, nr[0] * halfK[0] + nr[1] * halfK[1] + nr[2] * halfK[2]);
+        const dotHR = Math.max(0, nr[0] * halfR[0] + nr[1] * halfR[1] + nr[2] * halfR[2]);
+        const spec = Math.pow(dotHK, 24) + 0.7 * Math.pow(dotHR, 18);
+        const depth = 0.74 + 0.26 * sj;
+        let sh = (0.62 + 0.60 * diff + 0.35 * spec) * depth;
+
+        let kind = PETAL_EDGE[i] ? EDGE : PETAL;
+        let pt = 10 + pj;
+
+        // Dew sparkle on outer petals
+        if (op > 0.85 && sj > 0.55) {
+          const dewTw = Math.pow(Math.max(0, Math.sin(curT * 3 + (i % 30))), 8);
+          if (dewTw > 0.4) {
+            kind = GLINT;
+            sh = Math.max(sh, 0.6 + 0.6 * dewTw);
+          }
+        }
+
+        if (rev.k < 0.96) {
+          pt = -2;
+          sh = rev.tip ? 1.2 : 0.0;
+          kind = rev.tip ? GLINT : DUST;
+          if (rev.tip) tip_pts.push(pr);
+        }
+
+        P_all.push(pr);
+        shade_all.push(sh);
+        tag_all.push(kind);
+        part_all.push(pt);
+      }
+
+      const bodyCount = P_all.length;
+
+      // Floor Reflection
+      for (let i = 0; i < bodyCount; i++) {
+        const bp = P_all[i];
+        const bsh = shade_all[i];
+        const bpart = part_all[i];
+        P_all.push([bp[0], 2 * FLOOR - bp[1], bp[2]]);
+        shade_all.push(bpart >= 0 ? 0.18 * Math.max(0, Math.min(1.2, bsh)) : 0);
+        tag_all.push(REFL);
+        part_all.push(-1);
+      }
+
+      // Glitter
+      const gl = glitter(curT);
+      for (let i = 0; i < gl.P.length; i++) {
+        P_all.push(gl.P[i]);
+        shade_all.push(gl.S[i]);
+        tag_all.push(gl.T[i]);
+        part_all.push(-1);
+      }
+
+      // Sparks
+      const sp = sparks(curT, tip_pts);
+      for (let i = 0; i < sp.P.length; i++) {
+        P_all.push(sp.P[i]);
+        shade_all.push(sp.S[i]);
+        tag_all.push(sp.T[i]);
+        part_all.push(-1);
+      }
+
+      // Dew drops
+      const petalPointsSlice = P_all.slice(bodyCount - N_PETAL_PTS, bodyCount);
+      const dd = dewDrops(curT, petalPointsSlice);
+      for (let i = 0; i < dd.P.length; i++) {
+        P_all.push(dd.P[i]);
+        shade_all.push(dd.S[i]);
+        tag_all.push(dd.T[i]);
+        part_all.push(-1);
+      }
+
+      // Project into Camera Space and Z-buffer
+      gridPart.fill(-1);
+      gridDepth.fill(99.0);
+      gridLum.fill(0);
+      gridTag.fill(0);
+      gridChar.fill(0);
+      gridEdge.fill(0);
+      gridGx.fill(0);
+      gridGy.fill(0);
+
+      const F = 2.9;
+      const totalPoints = P_all.length;
+
+      // Index array sorted far to near
+      const indices = new Int32Array(totalPoints);
+      const zValues = new Float32Array(totalPoints);
+      for (let i = 0; i < totalPoints; i++) {
+        indices[i] = i;
+        const pt = P_all[i];
+        const rx = pt[0] - eye[0], ry = pt[1] - eye[1], rz = pt[2] - eye[2];
+        zValues[i] = rx * fwd[0] + ry * fwd[1] + rz * fwd[2];
+      }
+      indices.sort((a, b) => zValues[b] - zValues[a]);
+
+      let letterCount = 0;
+
+      // Pass 1: Solid body
+      for (let ordIdx = 0; ordIdx < totalPoints; ordIdx++) {
+        const i = indices[ordIdx];
+        const z = zValues[i];
+        if (z <= 0.2) continue;
+
+        const K = part_all[i];
+        if (K < 0) continue; // body only
+
+        const pt = P_all[i];
+        const rx = pt[0] - eye[0], ry = pt[1] - eye[1], rz = pt[2] - eye[2];
+        const x = rx * right[0] + ry * right[1] + rz * right[2];
+        const y = rx * up[0] + ry * up[1] + rz * up[2];
+
+        const zz = Math.max(z, 0.2);
+        const sx = (0.5 + x / zz * F * 0.5) * COLS;
+        const sy = (0.5 - y / zz * F * 0.5 * ASPECT) * ROWS;
+
+        const ix = Math.floor(sx);
+        const iy = Math.floor(sy);
+
+        if (ix >= 0 && ix < COLS && iy >= 0 && iy < ROWS) {
+          const gIdx = iy * COLS + ix;
+          gridPart[gIdx] = K;
+          gridDepth[gIdx] = z;
+          gridLum[gIdx] = shade_all[i];
+          gridTag[gIdx] = tag_all[i];
+        }
+      }
+
+      // Outlines pass
+      for (let iy = 0; iy < ROWS; iy++) {
+        for (let ix = 0; ix < COLS; ix++) {
+          const gIdx = iy * COLS + ix;
+          const p = gridPart[gIdx];
+          if (p < 0) continue;
+          const d = gridDepth[gIdx];
+          let gx = 0, gy = 0;
+          let isEdge = 0;
+
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const ny = iy + dy;
+              const nx = ix + dx;
+              let nb = -1, nz = 99.0;
+              if (ny >= 0 && ny < ROWS && nx >= 0 && nx < COLS) {
+                const nIdx = ny * COLS + nx;
+                nb = gridPart[nIdx];
+                nz = gridDepth[nIdx];
+              }
+              const out = (nb < 0) || (nb !== p && nz > d + 0.035);
+              if (out) {
+                gx += dx;
+                gy += dy;
+                if (dx === 0 || dy === 0) isEdge = 1;
+              }
+            }
+          }
+          gridGx[gIdx] = gx;
+          gridGy[gIdx] = gy;
+          gridEdge[gIdx] = isEdge;
+        }
+      }
+
+      // Inside characters & sparkle
+      for (let iy = 0; iy < ROWS; iy++) {
+        for (let ix = 0; ix < COLS; ix++) {
+          const gIdx = iy * COLS + ix;
+          if (gridPart[gIdx] >= 0) {
+            letterCount++;
+            const h = (iy * 7919 + ix * 104729) % 9973;
+            const lum = gridLum[gIdx];
+            const level = Math.max(0, Math.min(3, Math.floor(lum * 3.2)));
+            const fillCol = (h + Math.floor(curT * 4 + h % 11)) % 12;
+            const insideCh = FILL[level][fillCol];
+
+            if (gridEdge[gIdx]) {
+              gridChar[gIdx] = outlineLetter(gridGx[gIdx], gridGy[gIdx]);
+              gridLum[gIdx] = Math.max(0.85, lum);
+            } else {
+              gridChar[gIdx] = insideCh;
+              gridLum[gIdx] = Math.max(0.45, Math.min(1.0, 0.45 + 0.55 * lum / 0.9));
+            }
+
+            if (gridTag[gIdx] === GLINT) {
+              gridChar[gIdx] = AT["*"];
+            }
+          }
+        }
+      }
+
+      // Pass 2: Particles, Reflection
+      const brightGlints = [];
+      const dropRays = [];
+      const generalBrightRays = [];
+
+      for (let ordIdx = 0; ordIdx < totalPoints; ordIdx++) {
+        const i = indices[ordIdx];
+        const z = zValues[i];
+        if (z <= 0.2) continue;
+
+        const K = part_all[i];
+        if (K >= 0) continue; // non-body only
+        const sh = shade_all[i];
+        if (sh <= 0.02) continue;
+
+        const pt = P_all[i];
+        const rx = pt[0] - eye[0], ry = pt[1] - eye[1], rz = pt[2] - eye[2];
+        const x = rx * right[0] + ry * right[1] + rz * right[2];
+        const y = rx * up[0] + ry * up[1] + rz * up[2];
+
+        const zz = Math.max(z, 0.2);
+        const sx = (0.5 + x / zz * F * 0.5) * COLS;
+        const sy = (0.5 - y / zz * F * 0.5 * ASPECT) * ROWS;
+
+        const ix = Math.floor(sx);
+        const iy = Math.floor(sy);
+
+        if (ix >= 0 && ix < COLS && iy >= 0 && iy < ROWS) {
+          const gIdx = iy * COLS + ix;
+          const bodyPart = gridPart[gIdx];
+          const bodyDepth = gridDepth[gIdx];
+
+          // Occlusion check
+          if (bodyPart >= 0 && bodyDepth < z) continue;
+          if (bodyPart >= 0) continue; // body takes precedence
+
+          const tag = tag_all[i];
+          if (tag === REFL) {
+            const reflLevel = Math.max(0, Math.min(1, Math.floor(sh * 6)));
+            const fillCol = (iy * 31 + ix) % 12;
+            gridChar[gIdx] = FILL[reflLevel][fillCol];
+          } else {
+            if (sh > 0.7) gridChar[gIdx] = AT["*"];
+            else if (sh > 0.35) gridChar[gIdx] = AT["+"];
+            else gridChar[gIdx] = AT["."];
+          }
+          gridLum[gIdx] = Math.max(0, Math.min(1.0, sh));
+          gridTag[gIdx] = tag;
+          letterCount++;
+
+          if (tag === FIRE_B && sh > 1.0) {
+            dropRays.push({ cy: iy, cx: ix });
+          } else if (sh > 0.9 && (tag === GLINT || tag === FIRE_B || tag === FIRE_R)) {
+            if (generalBrightRays.length < 5) {
+              generalBrightRays.push({ cy: iy, cx: ix, v: sh });
+            }
+          }
+        }
+      }
+
+      // Bright glints scoring
+      const glintScores = [];
+      for (let iy = 0; iy < ROWS; iy++) {
+        for (let ix = 0; ix < COLS; ix++) {
+          const gIdx = iy * COLS + ix;
+          if (gridPart[gIdx] >= 0 && gridTag[gIdx] === GLINT) {
+            const h = (iy * 7919 + ix * 104729) % 9973;
+            glintScores.push({ idx: gIdx, cy: iy, cx: ix, score: gridLum[gIdx] + (h % 7) * 0.01 });
+          }
+        }
+      }
+      glintScores.sort((a, b) => b.score - a.score);
+      for (let n = 0; n < Math.min(4, glintScores.length); n++) {
+        if (glintScores[n].score <= 0) break;
+        const reach = Math.floor(4 + 6 * (0.5 + 0.5 * Math.sin(curT * 7 + n * 1.7)));
+        drawRays(gridChar, gridLum, gridTag, glintScores[n].cy, glintScores[n].cx, reach, ROWS, COLS);
+      }
+
+      // Drop rays
+      for (let di = 0; di < dropRays.length; di++) {
+        drawRays(gridChar, gridLum, gridTag, dropRays[di].cy, dropRays[di].cx, 5, ROWS, COLS);
+      }
+
+      // General bright rays
+      for (let bi = 0; bi < generalBrightRays.length; bi++) {
+        const item = generalBrightRays[bi];
+        const reach = Math.floor(2 + 3 * Math.min(item.v, 1.1));
+        drawRays(gridChar, gridLum, gridTag, item.cy, item.cx, reach, ROWS, COLS, 0.6);
+      }
+
+      // -------------------------------------------------------------
+      // Render to Canvases (Char Atlas + Color Multiplying + Fade Trail)
+      // -------------------------------------------------------------
+      frameCtx.fillStyle = "#000000";
+      frameCtx.fillRect(0, 0, W, H);
+      frameCtx.font = `${FONT_PX}px consolas, menlo, "dejavu sans mono", "courier new", monospace`;
+      frameCtx.textBaseline = "middle";
+      frameCtx.textAlign = "center";
+
+      for (let iy = 0; iy < ROWS; iy++) {
+        const yPx = iy * CH + CH / 2;
+        for (let ix = 0; ix < COLS; ix++) {
+          const gIdx = iy * COLS + ix;
+          const chCode = gridChar[gIdx];
+          if (chCode === 0) continue;
+
+          const ch = CHARS[chCode];
+          if (!ch || ch === " ") continue;
+
+          const tag = Math.max(0, Math.min(COLORS.length - 1, gridTag[gIdx]));
+          const colBase = COLORS[tag];
+          const lum = Math.max(0, Math.min(1.0, gridLum[gIdx]));
+
+          const r = Math.floor(colBase[0] * lum * 255);
+          const g = Math.floor(colBase[1] * lum * 255);
+          const b = Math.floor(colBase[2] * lum * 255);
+
+          if (r + g + b === 0) continue;
+
+          const xPx = ix * CW + CW / 2;
+          frameCtx.fillStyle = `rgb(${r},${g},${b})`;
+          frameCtx.fillText(ch, xPx, yPx);
+        }
+      }
+
+      // Trail: fade previous frames like TRAIL = 0.5 in Pygame
+      trailCtx.fillStyle = "rgba(0, 0, 0, 0.5)";
+      trailCtx.fillRect(0, 0, W, H);
+      trailCtx.globalCompositeOperation = "lighter";
+      trailCtx.drawImage(frameCanvas, 0, 0);
+      trailCtx.globalCompositeOperation = "source-over";
+
+      // Final compositing on screen with bloom glow layers
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, W, H);
+
+      // Base sharp art
+      ctx.drawImage(trailCanvas, 0, 0);
+
+      // Bloom layer 1: blur radius ~5, opacity 0.75
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.filter = "blur(5px)";
+      ctx.globalAlpha = 0.75;
+      ctx.drawImage(trailCanvas, 0, 0);
+
+      // Bloom layer 2: blur radius ~22, opacity 0.45
+      ctx.filter = "blur(22px)";
+      ctx.globalAlpha = 0.45;
+      ctx.drawImage(trailCanvas, 0, 0);
+      ctx.restore();
+
+      // Update HUD
+      const bloomPct = (op * 100).toFixed(1).padStart(5, " ");
+      const swayDeg = (((yaw * 180 / PI) % 360 + 360) % 360).toFixed(2).padStart(6, "0");
+      hudStat1.textContent = `bloom ${bloomPct}%   sway ${swayDeg}°`;
+      hudStat2.textContent = `letters ${letterCount.toLocaleString().padStart(6, "0")}`;
+
+      const dotBlink = Math.floor(curT * 2) % 2 === 0 ? "●" : " ";
+      hudTime.textContent = `${dotBlink} t ${curT.toFixed(2).padStart(5, "0")}s`;
+    }
+
+    function animate(now) {
+      const dt = Math.min((now - lastTime) / 1000, 1 / 15);
+      lastTime = now;
+
+      if (!paused) {
+        t += dt;
+        if (t > LOOP) {
+          t = 0.0;
+          trailCtx.fillStyle = "#000000";
+          trailCtx.fillRect(0, 0, W, H);
+        }
+        render(t);
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    // Keyboard controls
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space") {
+        paused = !paused;
+        e.preventDefault();
+      } else if (e.key === "r" || e.key === "R") {
+        t = 0.0;
+        trailCtx.fillStyle = "#000000";
+        trailCtx.fillRect(0, 0, W, H);
+        if (paused) render(t);
+      }
+    });
+
+    // Touch tap toggle for mobile
+    window.addEventListener("pointerdown", (e) => {
+      if (e.target.closest("#ui")) return;
+      // Single tap can pause/unpause
+    });
+
+    // Start
+    requestAnimationFrame(animate);
+  })();
+  </script>
+</body>
+</html>
