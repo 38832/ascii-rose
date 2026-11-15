@@ -1,0 +1,6 @@
+# ECC Rules for Agent Workflows
+
+- Before starting any task, check available ECC skills and descriptions.
+- Select only relevant skills; if an essential skill is excluded, read its `SKILL.md` directly.
+- Avoid indiscriminate folder scans and verbose explanations.
+- Proceed with direct implementation.
