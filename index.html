@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tammi forever - Rose</title>
+  <title>Tammi Forever - Rose</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Ballet:opsz@16..72&family=Whisper&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Meie+Script&display=swap" rel="stylesheet">
   <style>
     * {
       box-sizing: border-box;
@@ -101,14 +101,13 @@
     /* Elegant Glowing Cursive Title */
     .romantic-title {
       position: absolute;
-      top: 14px;
+      top: 18px;
       left: 50%;
       transform: translateX(-50%);
-      font-family: 'Ballet', 'Whisper', cursive, sans-serif;
-      font-optical-sizing: auto;
-      font-size: 58px;
+      font-family: 'Meie Script', cursive, sans-serif;
+      font-size: 56px;
       font-weight: 400;
-      letter-spacing: 3px;
+      letter-spacing: 2px;
       color: #ff3355;
       text-shadow:
         0 0 10px rgba(255, 51, 85, 0.95),
@@ -161,8 +160,8 @@
     /* Mobile / touch hints */
     @media (max-width: 768px) {
       .romantic-title {
-        font-size: 42px;
-        top: 10px;
+        font-size: 40px;
+        top: 14px;
       }
       .hud-sign, .hud-stat1, .hud-stat2 {
         left: 20px;
@@ -182,7 +181,7 @@
     <div id="ui">
       <div class="romantic-title">
         <span class="sparkle sparkle-1">✦</span>
-        Tammi forever
+        Tammi Forever
         <span class="sparkle sparkle-2">✦</span>
         <span class="sparkle sparkle-3">✦</span>
       </div>
@@ -754,8 +753,9 @@
       return { P, S, T };
     }
 
-    // Camera Look: Slightly shifted down target to leave ample head space at top
-    const target = [0, -0.22, 0], eye = [0.0, 1.62, 4.0];
+    // Camera Look: Lowered rose by shifting camera target & eye upwards (+0.42)
+    // Moves the top of the flower down to row 27, keeping the entire top area clean for the title
+    const target = [0, 0.37, 0], eye = [0.0, 2.17, 4.0];
     let fwd = [target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]];
     let flen = Math.hypot(fwd[0], fwd[1], fwd[2]);
     fwd = [fwd[0] / flen, fwd[1] / flen, fwd[2] / flen];
